@@ -69,21 +69,25 @@ port          = 4001
 # user         = ""
 # password     = ""
 
-# str2str outputs – each runs as a separate process
+# str2str outputs – each block runs as a separate str2str process.
+#
+# rtcm_messages applies to *every* output type (tcpsvr, udpsvr, file, ntrip, ntripsvr).
+# It is a comma-separated list of RTCM3 message IDs to forward.
+# Set to "" to forward everything (including raw NMEA from the bridge).
+# Common RTK messages:
+#   1005        = base station ARP position (essential for RTK)
+#   1074/1077   = GPS MSM4/MSM7 observables
+#   1084/1087   = GLONASS MSM4/MSM7 observables
+#   1094/1097   = Galileo MSM4/MSM7 observables
+#   1124/1127   = BeiDou MSM4/MSM7 observables
+#   1230        = GLONASS L1/L2 code-phase biases
+
 [[str2str.outputs]]
 name          = "rtcm3_tcp"
 enabled       = true
 type          = "tcpsvr"
 port          = 9001
 bind_addr     = "0.0.0.0"      # "" or "0.0.0.0" = all interfaces
-# Common RTK messages – MSM4+MSM7 observables + base position + GLONASS biases.
-# 1005 = base station ARP position (essential for RTK)
-# 1074/1077 = GPS MSM4/MSM7 observables
-# 1084/1087 = GLONASS MSM4/MSM7 observables
-# 1094/1097 = Galileo MSM4/MSM7 observables
-# 1124/1127 = BeiDou MSM4/MSM7 observables
-# 1230 = GLONASS L1/L2 code-phase biases
-# Set to "" to forward everything (including raw NMEA sentences from the bridge).
 rtcm_messages = "1005,1074,1077,1084,1087,1094,1097,1124,1127,1230"
 reconnect     = true
 

@@ -205,7 +205,7 @@ enabled       = true
 type          = "tcpsvr"      # tcpsvr | udpsvr | file | ntrip | ntripsvr
 port          = 9001
 bind_addr     = "0.0.0.0"
-rtcm_messages = ""            # "" = all; or comma-separated e.g. "1004,1005,1033"
+rtcm_messages = ""            # applies to ALL output types; "" = all; or comma-separated e.g. "1004,1005,1033"
 reconnect     = true
 # For file type only:
 # path         = "/var/log/gnss/rtcm3_%Y%m%d_%H%M%S.rtcm3"

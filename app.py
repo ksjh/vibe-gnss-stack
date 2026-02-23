@@ -72,6 +72,8 @@ type = "tcpcli"
 host = "127.0.0.1"
 port = 4001
 
+# rtcm_messages applies to every output type (tcpsvr, udpsvr, file, ntrip, ntripsvr).
+# "" = forward everything; or comma-separated RTCM3 IDs to filter.
 [[str2str.outputs]]
 name          = "rtcm3_tcp"
 enabled       = true
