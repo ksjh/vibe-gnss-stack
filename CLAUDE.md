@@ -66,7 +66,6 @@ vibe-gnss-stack/
 ├── gnss-dashboard.service  # systemd unit for Layer 3
 ├── install.sh              # Full system installation (requires sudo)
 ├── uninstall.sh            # Removes all installed files
-├── architecture.png        # Architecture diagram image
 └── README.md               # User-facing documentation
 ```
 
