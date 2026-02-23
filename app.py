@@ -78,7 +78,7 @@ enabled       = true
 type          = "tcpsvr"
 port          = 9001
 bind_addr     = "0.0.0.0"
-rtcm_messages = "1005,1074,1084,1094,1124,1230"
+rtcm_messages = "1005,1074,1077,1084,1087,1094,1097,1124,1127,1230"
 reconnect     = true
 
 [[str2str.outputs]]
