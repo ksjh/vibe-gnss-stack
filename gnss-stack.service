@@ -1,0 +1,61 @@
+# ============================================================
+# /usr/lib/systemd/system/gnss-stack.service
+#
+# Install path  : /usr/lib/systemd/system/
+# Enable with   : systemctl enable gnss-stack
+#   → creates a symlink in /etc/systemd/system/ automatically
+# Local overrides (preserved across updates):
+#   systemctl edit gnss-stack
+#   → /etc/systemd/system/gnss-stack.service.d/override.conf
+#
+# Manages: ser2net (layer 1) + str2str (layer 2)
+# Independent of gnss-dashboard – the dashboard works without this service.
+# ============================================================
+[Unit]
+Description=GNSS Stack (ser2net + str2str)
+Documentation=https://github.com/tomojitakasu/RTKLIB
+After=network.target
+# Intentionally no Wants/Requires on gnss-dashboard –
+# both services are independent of each other.
+
+[Service]
+Type=simple
+User=gnss
+Group=dialout
+SupplementaryGroups=dialout
+
+Environment=GNSS_CONFIG=/etc/gnss/str2str.toml
+PYTHON=/opt/gnss/venv/bin/python
+MANAGER=/opt/gnss/str2str_manager.py
+
+# ── Step 1: generate ser2net YAML from the current TOML ────────────────────
+# Runs before ExecStart. On non-zero exit, ExecStart is not launched
+# and systemd retries after RestartSec.
+# The dashboard is not affected (no dependency).
+ExecStartPre=${PYTHON} ${MANAGER} --config ${GNSS_CONFIG} --generate-yaml
+
+# ── Step 2: start ser2net + str2str ────────────────────────────────────────
+ExecStart=${PYTHON} ${MANAGER} --config ${GNSS_CONFIG}
+
+# Restart on failure with a generous interval so the dashboard stays usable
+# while the user corrects the configuration.
+Restart=on-failure
+RestartSec=30
+# Unlimited restart attempts (user must fix config in the dashboard)
+StartLimitIntervalSec=0
+
+# ── Security ───────────────────────────────────────────────────────────────
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+# /var/lock + /run/lock: str2str lock files
+# /etc/gnss:             read/write TOML + ser2net YAML
+# /var/log/gnss:         log output
+ReadWritePaths=/etc/gnss /var/log/gnss /var/lock /run/lock /tmp
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=gnss-stack
+
+[Install]
+WantedBy=multi-user.target

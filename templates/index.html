@@ -1,0 +1,933 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>GNSS Dashboard · str2str</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@400;600;700&family=Orbitron:wght@400;700&display=swap" rel="stylesheet"/>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<!-- CodeMirror for TOML editor -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css"/>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/material-darker.min.css"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/toml/toml.min.js"></script>
+
+<style>
+/* ============================================================
+   DESIGN: Industrial / Terminal · Dark Matter · Amber Accent
+   ============================================================ */
+:root {
+  --bg:        #0a0c10;
+  --bg2:       #0f1318;
+  --bg3:       #161b22;
+  --border:    #1e2733;
+  --accent:    #f0a500;
+  --accent2:   #00e5ff;
+  --accent3:   #7eff6b;
+  --danger:    #ff4757;
+  --text:      #c8d0db;
+  --text-dim:  #586474;
+  --mono:      'Share Tech Mono', monospace;
+  --sans:      'Rajdhani', sans-serif;
+  --display:   'Orbitron', sans-serif;
+
+  --gps:     #00d4ff;
+  --glonass: #ff6b35;
+  --galileo: #7cff6b;
+  --beidou:  #ffd700;
+  --qzss:    #ff69b4;
+  --multi:   #aaaaaa;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 14px;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* Scan-line overlay */
+body::after {
+  content: '';
+  position: fixed; inset: 0;
+  background: repeating-linear-gradient(
+    0deg, transparent, transparent 2px,
+    rgba(0,0,0,.08) 2px, rgba(0,0,0,.08) 4px
+  );
+  pointer-events: none;
+  z-index: 9999;
+}
+
+/* ---- Top Bar ---- */
+header {
+  display: flex; align-items: center; gap: 16px;
+  padding: 10px 20px;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; z-index: 100;
+}
+.logo {
+  font-family: var(--display);
+  font-size: 1.1rem;
+  color: var(--accent);
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.logo span { color: var(--accent2); }
+
+.status-pill {
+  display: flex; align-items: center; gap: 6px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 4px 10px;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--text-dim);
+  transition: background .3s;
+}
+.dot.active  { background: var(--accent3); box-shadow: 0 0 6px var(--accent3); }
+.dot.warning { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+.dot.error   { background: var(--danger); box-shadow: 0 0 6px var(--danger); }
+
+.fix-badge {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 2px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+}
+.fix-badge.fix-1 { color: var(--accent3); border-color: var(--accent3)44; }
+.fix-badge.fix-2 { color: var(--accent);  border-color: var(--accent)44; }
+.fix-badge.fix-4, .fix-badge.fix-5 { color: var(--accent2); border-color: var(--accent2)44; }
+
+nav {
+  display: flex; gap: 2px;
+  margin-left: auto;
+}
+.tab-btn {
+  background: none;
+  border: 1px solid transparent;
+  color: var(--text-dim);
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: .05em;
+  padding: 5px 16px;
+  cursor: pointer;
+  border-radius: 3px;
+  transition: all .2s;
+}
+.tab-btn:hover { color: var(--text); border-color: var(--border); }
+.tab-btn.active {
+  color: var(--accent);
+  border-color: var(--accent)55;
+  background: var(--accent)0f;
+}
+
+/* ---- Layout ---- */
+.view { display: none; padding: 16px; }
+.view.active { display: block; }
+
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+.span-2 { grid-column: span 2; }
+
+/* ---- Panel ---- */
+.panel {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.panel-header {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg3);
+}
+.panel-title {
+  font-family: var(--display);
+  font-size: 11px;
+  letter-spacing: .12em;
+  color: var(--accent);
+  text-transform: uppercase;
+}
+.panel-meta {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.panel-body { padding: 12px; }
+
+/* ---- Map ---- */
+#map { height: 380px; }
+.leaflet-container { background: var(--bg) !important; }
+
+/* ---- Stats ---- */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: 8px;
+}
+.stat {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 10px 12px;
+}
+.stat-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  margin-bottom: 4px;
+}
+.stat-value {
+  font-family: var(--display);
+  font-size: 18px;
+  color: var(--accent2);
+  line-height: 1;
+}
+.stat-unit {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+
+/* ---- SNR Chart ---- */
+#snrChart-wrap { height: 240px; }
+
+/* ---- AZ/EL Sky Plot ---- */
+#skyplot { width: 100%; aspect-ratio: 1; max-width: 340px; margin: 0 auto; display: block; }
+
+/* ---- Config Editor ---- */
+.editor-toolbar {
+  display: flex; gap: 8px; align-items: center;
+  padding: 10px 14px;
+  background: var(--bg3);
+  border-bottom: 1px solid var(--border);
+}
+.btn {
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  padding: 6px 16px;
+  border-radius: 3px;
+  cursor: pointer;
+  border: 1px solid;
+  transition: all .15s;
+  text-transform: uppercase;
+}
+.btn-accent {
+  background: var(--accent)18;
+  border-color: var(--accent)66;
+  color: var(--accent);
+}
+.btn-accent:hover { background: var(--accent)30; }
+.btn-danger {
+  background: var(--danger)18;
+  border-color: var(--danger)66;
+  color: var(--danger);
+}
+.btn-danger:hover { background: var(--danger)30; }
+.btn-ok {
+  background: var(--accent3)18;
+  border-color: var(--accent3)66;
+  color: var(--accent3);
+}
+.btn-ok:hover { background: var(--accent3)30; }
+.btn-blue {
+  background: var(--accent2)18;
+  border-color: var(--accent2)66;
+  color: var(--accent2);
+}
+.btn-blue:hover { background: var(--accent2)30; }
+
+.editor-path {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-left: auto;
+}
+
+.CodeMirror {
+  height: calc(100vh - 280px);
+  min-height: 300px;
+  font-family: var(--mono) !important;
+  font-size: 13px !important;
+  background: var(--bg) !important;
+  color: var(--text) !important;
+}
+.CodeMirror-scroll { background: var(--bg) !important; }
+
+/* ---- Toast ---- */
+#toast-container {
+  position: fixed; bottom: 24px; right: 24px;
+  display: flex; flex-direction: column; gap: 8px;
+  z-index: 9000;
+}
+.toast {
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 10px 16px;
+  border-radius: 3px;
+  border-left: 3px solid;
+  background: var(--bg3);
+  border-color: var(--accent3);
+  color: var(--text);
+  animation: fadeIn .2s ease;
+  max-width: 320px;
+}
+.toast.err { border-color: var(--danger); }
+.toast.warn { border-color: var(--accent); }
+@keyframes fadeIn { from { opacity:0; transform: translateX(20px); } to { opacity:1; transform: none; } }
+
+/* ---- Service Control ---- */
+.svc-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 14px;
+  background: var(--bg3);
+  border-bottom: 1px solid var(--border);
+}
+.svc-name {
+  font-family: var(--display);
+  font-size: 13px;
+  letter-spacing: .08em;
+  color: var(--text);
+  flex: 1;
+}
+
+/* ---- Legend ---- */
+.legend {
+  display: flex; flex-wrap: wrap; gap: 6px 14px;
+  padding: 8px 12px;
+}
+.legend-item {
+  display: flex; align-items: center; gap: 5px;
+  font-family: var(--mono); font-size: 11px; color: var(--text-dim);
+}
+.legend-dot {
+  width: 10px; height: 10px; border-radius: 50%;
+}
+
+/* ---- Satellite table ---- */
+.sat-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.sat-table th {
+  padding: 5px 8px;
+  text-align: left;
+  color: var(--text-dim);
+  font-size: 10px;
+  letter-spacing: .08em;
+  border-bottom: 1px solid var(--border);
+  text-transform: uppercase;
+}
+.sat-table td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border)88;
+}
+.sat-table tr:hover td { background: var(--bg3); }
+.snr-bar {
+  display: inline-block;
+  height: 8px;
+  border-radius: 2px;
+  min-width: 2px;
+  transition: width .5s;
+}
+
+/* Responsive */
+@media (max-width: 900px) {
+  .grid-2, .grid-3 { grid-template-columns: 1fr; }
+  .span-2 { grid-column: span 1; }
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">GNSS<span>·</span>CTL</div>
+  <div class="status-pill">
+    <div class="dot" id="svc-dot"></div>
+    <span id="svc-label">–</span>
+  </div>
+  <div class="status-pill">
+    <div class="dot" id="serial-dot"></div>
+    <span id="serial-label">SERIAL</span>
+  </div>
+  <div class="fix-badge" id="fix-badge">NO FIX</div>
+  <nav>
+    <button class="tab-btn active" onclick="showView('dashboard')">Dashboard</button>
+    <button class="tab-btn" onclick="showView('satellites')">Satellites</button>
+    <button class="tab-btn" onclick="showView('config')">Configuration</button>
+  </nav>
+</header>
+
+<!-- ================================================================ DASHBOARD -->
+<div class="view active" id="view-dashboard">
+  <div class="grid-2" style="margin-bottom:12px">
+    <!-- MAP -->
+    <div class="panel span-2" style="grid-column:1/3">
+      <div class="panel-header">
+        <span class="panel-title">Position · OpenStreetMap</span>
+        <span class="panel-meta" id="coord-display">–</span>
+      </div>
+      <div id="map"></div>
+    </div>
+  </div>
+
+  <div class="grid-3">
+    <!-- STATS -->
+    <div class="panel">
+      <div class="panel-header"><span class="panel-title">Fix · Quality</span></div>
+      <div class="panel-body">
+        <div class="stat-grid">
+          <div class="stat">
+            <div class="stat-label">Fix</div>
+            <div class="stat-value" id="s-fix">–</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Sats used</div>
+            <div class="stat-value" id="s-sats">–</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">HDOP</div>
+            <div class="stat-value" id="s-hdop">–</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">PDOP</div>
+            <div class="stat-value" id="s-pdop">–</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Altitude</div>
+            <div class="stat-value" id="s-alt">–</div>
+            <div class="stat-unit">m MSL</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Speed</div>
+            <div class="stat-value" id="s-speed">–</div>
+            <div class="stat-unit">km/h</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Track</div>
+            <div class="stat-value" id="s-track">–</div>
+            <div class="stat-unit">°</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">UTC</div>
+            <div class="stat-value" style="font-size:13px" id="s-utc">–</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SNR Chart -->
+    <div class="panel span-2">
+      <div class="panel-header">
+        <span class="panel-title">Signal Strength (SNR) · All Constellations</span>
+        <span class="panel-meta" id="snr-count">0 SVs</span>
+      </div>
+      <div class="panel-body" style="padding:8px">
+        <div id="snrChart-wrap"><canvas id="snrChart"></canvas></div>
+      </div>
+      <div class="legend" id="snr-legend">
+        <div class="legend-item"><div class="legend-dot" style="background:var(--gps)"></div>GPS</div>
+        <div class="legend-item"><div class="legend-dot" style="background:var(--glonass)"></div>GLONASS</div>
+        <div class="legend-item"><div class="legend-dot" style="background:var(--galileo)"></div>Galileo</div>
+        <div class="legend-item"><div class="legend-dot" style="background:var(--beidou)"></div>BeiDou</div>
+        <div class="legend-item"><div class="legend-dot" style="background:var(--qzss)"></div>QZSS</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ================================================================ SATELLITES -->
+<div class="view" id="view-satellites">
+  <div class="grid-2">
+    <!-- Sky Plot -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">Sky Plot · Azimuth/Elevation</span>
+        <span class="panel-meta" id="sky-count">–</span>
+      </div>
+      <div class="panel-body" style="padding:16px">
+        <canvas id="skyplot"></canvas>
+        <div class="legend" style="margin-top:8px" id="sky-legend">
+          <div class="legend-item"><div class="legend-dot" style="background:var(--gps)"></div>GPS</div>
+          <div class="legend-item"><div class="legend-dot" style="background:var(--glonass)"></div>GLONASS</div>
+          <div class="legend-item"><div class="legend-dot" style="background:var(--galileo)"></div>Galileo</div>
+          <div class="legend-item"><div class="legend-dot" style="background:var(--beidou)"></div>BeiDou</div>
+          <div class="legend-item"><div class="legend-dot" style="background:var(--qzss)"></div>QZSS</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Satellite Table -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">Satellite Table</span>
+        <span class="panel-meta" id="table-count">–</span>
+      </div>
+      <div class="panel-body" style="padding:0; max-height:460px; overflow-y:auto">
+        <table class="sat-table">
+          <thead>
+            <tr>
+              <th>System</th><th>PRN</th><th>Freq</th>
+              <th>AZ°</th><th>EL°</th><th>SNR</th><th>Signal</th><th>Used</th>
+            </tr>
+          </thead>
+          <tbody id="sat-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Per-system SNR charts -->
+    <div class="panel span-2">
+      <div class="panel-header"><span class="panel-title">SNR by Constellation</span></div>
+      <div class="panel-body" style="padding:8px">
+        <div style="height:280px"><canvas id="snrChart2"></canvas></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ================================================================ CONFIG -->
+<div class="view" id="view-config">
+  <div class="panel">
+    <div class="editor-toolbar">
+      <button class="btn btn-ok" onclick="saveConfig()">💾 Save</button>
+      <button class="btn btn-blue" onclick="saveAndRestart()">⟳ Save &amp; Restart</button>
+      <button class="btn btn-accent" onclick="loadConfig()">↺ Reload</button>
+      <span style="margin:0 8px; color:var(--border)">│</span>
+      <button class="btn btn-ok"    onclick="serviceAction('start')">▶ Start</button>
+      <button class="btn btn-danger" onclick="serviceAction('stop')">■ Stop</button>
+      <button class="btn btn-blue"  onclick="serviceAction('restart')">⟳ Restart</button>
+      <span class="editor-path">{{ config_path }}</span>
+    </div>
+    <div id="editor-container">
+      <textarea id="toml-editor"></textarea>
+    </div>
+  </div>
+</div>
+
+<div id="toast-container"></div>
+
+<script>
+// =========================================================
+// Tab Navigation
+// =========================================================
+function showView(name) {
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('view-' + name).classList.add('active');
+  document.querySelectorAll('.tab-btn').forEach(b => {
+    if (b.textContent.toLowerCase().includes(name.substring(0,4))) b.classList.add('active');
+  });
+  if (name === 'satellites') { drawSkyPlot(); updateSatTable(); }
+}
+
+// =========================================================
+// Toast
+// =========================================================
+function toast(msg, type='ok') {
+  const d = document.createElement('div');
+  d.className = 'toast' + (type==='error' ? ' err' : type==='warn' ? ' warn' : '');
+  d.textContent = msg;
+  document.getElementById('toast-container').appendChild(d);
+  setTimeout(() => d.remove(), 4000);
+}
+
+// =========================================================
+// MAP
+// =========================================================
+const map = L.map('map', { zoomControl: true, attributionControl: true }).setView([0,0], 3);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '© OpenStreetMap contributors',
+  maxZoom: 19
+}).addTo(map);
+
+const markerIcon = L.divIcon({
+  html: `<svg width="24" height="24" viewBox="0 0 24 24">
+    <circle cx="12" cy="12" r="10" fill="#f0a500" fill-opacity=".25" stroke="#f0a500" stroke-width="2"/>
+    <circle cx="12" cy="12" r="4" fill="#f0a500"/>
+  </svg>`,
+  iconSize: [24,24], iconAnchor: [12,12], className: ''
+});
+let marker = null;
+let trackPoints = [];
+let trackLine = null;
+let mapInit = false;
+
+function updateMap(lat, lon) {
+  if (!lat || !lon) return;
+  if (!marker) {
+    marker = L.marker([lat,lon], {icon: markerIcon}).addTo(map);
+  } else {
+    marker.setLatLng([lat,lon]);
+  }
+  trackPoints.push([lat,lon]);
+  if (trackPoints.length > 500) trackPoints.shift();
+  if (!trackLine) {
+    trackLine = L.polyline(trackPoints, {color:'#f0a500', weight:2, opacity:.5}).addTo(map);
+  } else {
+    trackLine.setLatLngs(trackPoints);
+  }
+  if (!mapInit) {
+    map.setView([lat,lon], 16);
+    mapInit = true;
+  }
+}
+
+// =========================================================
+// SNR Bar Chart (Dashboard)
+// =========================================================
+const snrCtx = document.getElementById('snrChart').getContext('2d');
+const snrChart = new Chart(snrCtx, {
+  type: 'bar',
+  data: { labels: [], datasets: [{ data: [], backgroundColor: [], borderWidth: 0, borderRadius: 2 }] },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    animation: { duration: 300 },
+    plugins: { legend: { display: false }, tooltip: {
+      callbacks: { title: (items) => items[0].label, label: (item) => ` SNR: ${item.raw} dB` }
+    }},
+    scales: {
+      x: { ticks: { color: '#586474', font: { family: 'Share Tech Mono', size: 10 }, maxRotation: 90 },
+           grid: { color: '#1e2733' } },
+      y: { ticks: { color: '#586474', font: { family: 'Share Tech Mono', size: 10 } },
+           grid: { color: '#1e2733' }, min: 0, max: 55 }
+    }
+  }
+});
+
+// SNR Chart 2 (Satellites view)
+const snrCtx2 = document.getElementById('snrChart2').getContext('2d');
+const snrChart2 = new Chart(snrCtx2, {
+  type: 'bar',
+  data: { labels: [], datasets: [] },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    animation: { duration: 300 },
+    plugins: { legend: { display: true, labels: { color: '#c8d0db', font: { family: 'Share Tech Mono', size: 11 } } } },
+    scales: {
+      x: { stacked: false, ticks: { color: '#586474', font: { family: 'Share Tech Mono', size: 10 }, maxRotation: 90 },
+           grid: { color: '#1e2733' } },
+      y: { stacked: false, ticks: { color: '#586474', font: { family: 'Share Tech Mono', size: 10 } },
+           grid: { color: '#1e2733' }, min: 0, max: 55 }
+    }
+  }
+});
+
+const SYSCOLOR = { GPS:'#00d4ff', GLONASS:'#ff6b35', Galileo:'#7cff6b', BeiDou:'#ffd700', QZSS:'#ff69b4', Multi:'#aaaaaa' };
+
+function updateSNRChart(satellites, usedSet) {
+  const sats = Object.values(satellites).filter(s => s.snr > 0);
+  sats.sort((a,b) => (a.system+a.prn).localeCompare(b.system+b.prn));
+
+  const labels = sats.map(s => `${s.system[0]}${s.prn}`);
+  const data   = sats.map(s => s.snr);
+  const bgColors = sats.map(s => {
+    if (s.valid === false) return 'transparent';
+    const base = SYSCOLOR[s.system] || '#aaa';
+    return usedSet.includes(s.prn) ? base : base + '66';
+  });
+  const borderColors = sats.map(s => {
+    const base = SYSCOLOR[s.system] || '#aaa';
+    if (s.valid === false) return usedSet.includes(s.prn) ? base : base + '66';
+    return 'transparent';
+  });
+  const borderWidths = sats.map(s => s.valid === false ? 1.5 : 0);
+
+  snrChart.data.labels = labels;
+  snrChart.data.datasets[0].data = data;
+  snrChart.data.datasets[0].backgroundColor = bgColors;
+  snrChart.data.datasets[0].borderColor = borderColors;
+  snrChart.data.datasets[0].borderWidth = borderWidths;
+  snrChart.update('none');
+  document.getElementById('snr-count').textContent = sats.length + ' SVs';
+
+  // Chart2 grouped by system
+  const systems = [...new Set(sats.map(s => s.system))];
+  snrChart2.data.labels = labels;
+  snrChart2.data.datasets = systems.map(sys => ({
+    label: sys,
+    data: sats.map(s => s.system === sys ? s.snr : 0),
+    backgroundColor: sats.map(s => {
+      if (s.system !== sys) return 'transparent';
+      return s.valid === false ? 'transparent' : (SYSCOLOR[sys] || '#aaa') + 'cc';
+    }),
+    borderColor: sats.map(s => s.system === sys ? (SYSCOLOR[sys] || '#aaa') + 'cc' : 'transparent'),
+    borderWidth: sats.map(s => s.system === sys && s.valid === false ? 1.5 : 0),
+    borderRadius: 2,
+  }));
+  snrChart2.update('none');
+}
+
+// =========================================================
+// Sky Plot (Canvas 2D)
+// =========================================================
+const skyCanvas = document.getElementById('skyplot');
+const skyCtx = skyCanvas.getContext('2d');
+
+function drawSkyPlot(satellites={}, usedSet=[]) {
+  const W = skyCanvas.offsetWidth || 320;
+  skyCanvas.width  = W;
+  skyCanvas.height = W;
+  const cx = W/2, cy = W/2, R = W/2 - 18;
+  const ctx = skyCtx;
+
+  ctx.clearRect(0, 0, W, W);
+
+  // Background
+  ctx.fillStyle = '#0f1318';
+  ctx.beginPath(); ctx.arc(cx, cy, R+14, 0, Math.PI*2); ctx.fill();
+
+  // Grid rings (elevation 0°, 30°, 60°, 90°)
+  [0,30,60,90].forEach(el => {
+    const r = R * (1 - el/90);
+    ctx.strokeStyle = '#1e2733';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4,4]);
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI*2); ctx.stroke();
+    ctx.setLineDash([]);
+    if (el < 90) {
+      ctx.fillStyle = '#586474';
+      ctx.font = '10px Share Tech Mono';
+      ctx.fillText(el+'°', cx+4, cy - r + 12);
+    }
+  });
+
+  // Cardinal lines
+  ctx.strokeStyle = '#1e2733'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(cx, cy-R); ctx.lineTo(cx, cy+R); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(cx-R, cy); ctx.lineTo(cx+R, cy); ctx.stroke();
+
+  // Cardinal labels
+  ctx.fillStyle = '#586474'; ctx.font = '11px Rajdhani';
+  ctx.textAlign = 'center';
+  ctx.fillText('N', cx, cy-R-6);
+  ctx.fillText('S', cx, cy+R+14);
+  ctx.fillText('E', cx+R+12, cy+4);
+  ctx.fillText('W', cx-R-12, cy+4);
+
+  // Satellites
+  Object.values(satellites).forEach(sv => {
+    if (!sv.valid) return;
+    const r = R * Math.cos(sv.el * Math.PI/180);
+    const a = (sv.az - 90) * Math.PI/180;  // 0=N, clockwise
+    const sx = cx + r * Math.cos(a);
+    const sy = cy + r * Math.sin(a);
+
+    const color = SYSCOLOR[sv.system] || '#aaa';
+    const isUsed = usedSet.includes(sv.prn);
+    const radius = isUsed ? 7 : 5;
+
+    // Dot
+    ctx.beginPath(); ctx.arc(sx, sy, radius, 0, Math.PI*2);
+    ctx.fillStyle = isUsed ? color : color + '55';
+    ctx.fill();
+    if (isUsed) {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+
+    // Label
+    ctx.fillStyle = isUsed ? '#fff' : '#586474';
+    ctx.font = '9px Share Tech Mono';
+    ctx.textAlign = 'center';
+    ctx.fillText(sv.prn, sx, sy + 14);
+  });
+
+  document.getElementById('sky-count').textContent =
+    Object.values(satellites).filter(s => s.valid !== false).length + ' SVs';
+}
+
+// =========================================================
+// Satellite Table
+// =========================================================
+function updateSatTable(satellites={}, usedSet=[]) {
+  const tbody = document.getElementById('sat-tbody');
+  const rows = Object.values(satellites).sort((a,b) =>
+    (a.system+a.prn).localeCompare(b.system+b.prn));
+
+  tbody.innerHTML = rows.map(sv => {
+    const c = SYSCOLOR[sv.system] || '#aaa';
+    const used = usedSet.includes(sv.prn);
+    const snrW = Math.round(sv.snr / 55 * 80);
+    const invalid = sv.valid === false;
+    return `<tr${invalid ? ' style="text-decoration:line-through;opacity:0.5"' : ''}>
+      <td style="color:${c}">${sv.system}</td>
+      <td>${sv.prn}</td>
+      <td style="color:${c}88">${sv.freq||'L1'}</td>
+      <td>${sv.az??'–'}</td>
+      <td>${sv.el??'–'}</td>
+      <td>${sv.snr}</td>
+      <td><span class="snr-bar" style="width:${snrW}px;background:${c}"></span></td>
+      <td style="color:${used?'#7eff6b':'#586474'}">${used?'✓':'–'}</td>
+    </tr>`;
+  }).join('');
+  document.getElementById('table-count').textContent = rows.filter(s => s.valid !== false).length + ' SVs';
+}
+
+// =========================================================
+// FIX Labels
+// =========================================================
+const FIX_LABELS = ['No Fix','GPS','DGPS','PPS','RTK Fixed','RTK Float','DR','Man','Sim','WAAS'];
+const FIX_DESCR  = ['NO FIX','GPS FIX','DGPS','PPS','RTK FIX','RTK FLOAT','DEAD RECK','MANUAL','SIM','SBAS'];
+
+function updateHeader(state) {
+  // Service dot
+  const svcDot = document.getElementById('svc-dot');
+  const svcLbl = document.getElementById('svc-label');
+  fetch('/api/service/status').then(r=>r.json()).then(d => {
+    const a = d.active || 'unknown';
+    svcDot.className = 'dot' + (a==='active'?' active': a==='failed'?' error':' warning');
+    svcLbl.textContent = a.toUpperCase();
+  }).catch(()=>{});
+
+  // Fix badge
+  const badge = document.getElementById('fix-badge');
+  const fix = state.fix || 0;
+  badge.textContent = FIX_DESCR[fix] || 'FIX '+fix;
+  badge.className = 'fix-badge fix-' + fix;
+
+  // Serial dot
+  const srlDot = document.getElementById('serial-dot');
+  if (state.last_update) {
+    const age = (Date.now() - new Date(state.last_update+'Z').getTime()) / 1000;
+    srlDot.className = 'dot' + (age < 3 ? ' active' : age < 10 ? ' warning' : ' error');
+  }
+
+  // Stats
+  const v = (val, dec=2) => val !== null && val !== undefined ? Number(val).toFixed(dec) : '–';
+  document.getElementById('s-fix').textContent  = FIX_LABELS[fix] || fix;
+  document.getElementById('s-sats').textContent = state.used_prns?.length ?? '–';
+  document.getElementById('s-hdop').textContent = v(state.hdop, 1);
+  document.getElementById('s-pdop').textContent = v(state.pdop, 1);
+  document.getElementById('s-alt').textContent  = v(state.alt, 1);
+  const spd = state.speed_knots != null ? (state.speed_knots * 1.852).toFixed(1) : '–';
+  document.getElementById('s-speed').textContent = spd;
+  document.getElementById('s-track').textContent = v(state.track, 1);
+  document.getElementById('s-utc').textContent   = state.utc ? state.utc.replace(/(\d{2})(\d{2})(\d{2})\..*/, '$1:$2:$3') : '–';
+
+  if (state.lat && state.lon) {
+    document.getElementById('coord-display').textContent =
+      `${state.lat.toFixed(7)}° N  ${state.lon.toFixed(7)}° E  ${v(state.alt,1)} m`;
+  }
+}
+
+// =========================================================
+// WebSocket
+// =========================================================
+let latestState = {};
+const socket = io();
+socket.on('gnss_update', state => {
+  latestState = state;
+  updateHeader(state);
+  updateMap(state.lat, state.lon);
+  updateSNRChart(state.satellites || {}, state.used_prns || []);
+  // Only update satellite views if visible
+  if (document.getElementById('view-satellites').classList.contains('active')) {
+    drawSkyPlot(state.satellites || {}, state.used_prns || []);
+    updateSatTable(state.satellites || {}, state.used_prns || []);
+  }
+});
+
+// =========================================================
+// Config Editor (CodeMirror)
+// =========================================================
+let editor;
+window.addEventListener('load', () => {
+  editor = CodeMirror.fromTextArea(document.getElementById('toml-editor'), {
+    mode: 'toml',
+    theme: 'material-darker',
+    lineNumbers: true,
+    indentWithTabs: false,
+    tabSize: 2,
+    extraKeys: { 'Ctrl-S': saveConfig }
+  });
+  // Call loadConfig() only after the editor has been initialized
+  loadConfig();
+});
+
+function loadConfig() {
+  fetch('/api/config').then(r=>r.json()).then(d => {
+    if (d.ok) { editor.setValue(d.content); toast('Configuration loaded'); }
+    else toast('Error: ' + d.error, 'error');
+  });
+}
+
+function saveConfig() {
+  const content = editor.getValue();
+  fetch('/api/config', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({content})
+  }).then(r=>r.json()).then(d => {
+    if (d.ok) toast('✓ Saved (backup: ' + d.backup + ')');
+    else toast('Error: ' + d.error, 'error');
+  });
+}
+
+function saveAndRestart() {
+  const content = editor.getValue();
+  fetch('/api/config', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({content})
+  }).then(r=>r.json()).then(d => {
+    if (!d.ok) { toast('Error: ' + d.error, 'error'); return; }
+    toast('✓ Saved – restarting service...');
+    serviceAction('restart');
+  });
+}
+
+function serviceAction(action) {
+  fetch('/api/service/' + action, {method:'POST'})
+    .then(r=>r.json())
+    .then(d => {
+      if (d.ok) toast('✓ Service ' + action);
+      else toast('Error: ' + (d.err || d.error), 'error');
+    });
+}
+
+// =========================================================
+// Init
+// =========================================================
+// Poll service status every 5 s
+setInterval(() => updateHeader(latestState), 5000);
+
+// Initial fetch
+fetch('/api/gnss').then(r=>r.json()).then(state => {
+  latestState = state;
+  updateHeader(state);
+  updateMap(state.lat, state.lon);
+  updateSNRChart(state.satellites||{}, state.used_prns||[]);
+});
+</script>
+</body>
+</html>

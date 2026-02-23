@@ -1,0 +1,48 @@
+# ============================================================
+# /usr/lib/systemd/system/gnss-dashboard.service
+#
+# Install path  : /usr/lib/systemd/system/
+# Enable with   : systemctl enable gnss-dashboard
+# Local overrides: systemctl edit gnss-dashboard
+#
+# The dashboard is completely independent of the gnss-stack service.
+# It starts even when ser2net/str2str are not running or misconfigured
+# – the NMEA reader reconnects in the background.
+# ============================================================
+[Unit]
+Description=GNSS Dashboard Web UI
+After=network.target
+# Intentionally no Wants/Requires on gnss-stack –
+# the dashboard must remain usable without a working data pipeline.
+
+[Service]
+Type=simple
+User=gnss
+Group=dialout
+
+Environment=GNSS_CONFIG=/etc/gnss/str2str.toml
+
+# FLASK_SECRET should be overridden in a drop-in:
+#   systemctl edit gnss-dashboard
+#   [Service]
+#   Environment=FLASK_SECRET=my-secret-password
+Environment=FLASK_SECRET=change-me-in-production
+
+ExecStart=/opt/gnss/venv/bin/python /opt/gnss/app.py
+
+# Always restart the dashboard – it should be reachable at all times
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=0
+
+# NoNewPrivileges=true removed – blocks sudo for systemctl
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/etc/gnss /var/log/gnss /var/lock /run/lock
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=gnss-dashboard
+
+[Install]
+WantedBy=multi-user.target

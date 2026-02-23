@@ -1,0 +1,169 @@
+# ============================================================
+# GNSS Stack Configuration
+# Layers: ser2net → str2str → outputs
+#         ser2net → web frontend (NMEA)
+# ============================================================
+
+# ------------------------------------------------------------
+# [general] – shared settings
+# ------------------------------------------------------------
+[general]
+log_level     = "INFO"          # DEBUG | INFO | WARNING | ERROR
+log_file      = "/var/log/gnss/manager.log"
+restart_delay = 5               # seconds before reconnect attempt
+max_restarts  = 0               # 0 = unlimited
+
+# ------------------------------------------------------------
+# [ser2net] – layer 1: serial port → TCP server
+#
+# ser2net exposes the raw data stream (NMEA + RTCM3) as a TCP
+# server. All downstream services connect as TCP clients.
+#
+# Set enabled = false if ser2net is not needed
+# (e.g. because another TCP server already exists).
+# ------------------------------------------------------------
+[ser2net]
+enabled     = true
+binary      = "/usr/sbin/ser2net"
+
+# Serial GNSS receiver
+device      = "/dev/ttyUSB0"
+baudrate    = 115200
+
+# TCP port ser2net listens on
+port        = 4001
+
+# Bind address:
+#   "127.0.0.1"  → local only (secure)
+#   "0.0.0.0"    → reachable on all network interfaces
+bind_addr   = "127.0.0.1"
+
+# Maximum simultaneous connections (0 = unlimited)
+max_connections = 10
+
+# Timeout in seconds (0 = no timeout)
+timeout     = 0
+
+# ser2net YAML config file (auto-generated on startup)
+config_file = "/etc/gnss/ser2net.yaml"
+
+# ------------------------------------------------------------
+# [str2str] – layer 2: RTCM3 filter and distributor
+#
+# str2str reads from one source (typically the ser2net TCP server)
+# and forwards only RTCM3 data to multiple outputs.
+# ------------------------------------------------------------
+[str2str]
+binary        = "/usr/local/bin/str2str"
+
+# Input source for str2str
+# Typically the ser2net TCP server (localhost)
+[str2str.input]
+type          = "tcpcli"        # tcpcli | tcpsvr | serial | ntrip | file
+host          = "127.0.0.1"
+port          = 4001
+# Alternative: direct serial (without ser2net):
+# type         = "serial"
+# device       = "/dev/ttyUSB0"
+# baudrate     = 115200
+# Alternative: external TCP server:
+# type         = "tcpcli"
+# host         = "192.168.1.50"
+# port         = 9000
+# Alternative: NTRIP input:
+# type         = "ntrip"
+# host         = "ntrip.example.com"
+# port         = 2101
+# mountpoint   = "SOURCE01"
+# user         = ""
+# password     = ""
+
+# str2str outputs – each runs as a separate process
+[[str2str.outputs]]
+name          = "rtcm3_tcp"
+enabled       = true
+type          = "tcpsvr"
+port          = 9001
+bind_addr     = "0.0.0.0"      # "" or "0.0.0.0" = all interfaces
+rtcm_messages = ""             # empty = all; e.g. "1004,1005,1006,1008,1012,1033,1230"
+reconnect     = true
+
+[[str2str.outputs]]
+name          = "rtcm3_udp"
+enabled       = false
+type          = "udpsvr"
+port          = 9002
+bind_addr     = "0.0.0.0"
+rtcm_messages = ""
+reconnect     = true
+
+[[str2str.outputs]]
+name          = "file_logger"
+enabled       = true
+type          = "file"
+path          = "/var/log/gnss/rtcm3_%Y%m%d_%H%M%S.rtcm3"
+swap_interval = 86400           # file rotation interval in seconds (0 = never)
+rtcm_messages = ""
+reconnect     = false
+
+[[str2str.outputs]]
+name          = "ntrip_caster"
+enabled       = false
+type          = "ntrip"         # push data to an external NTRIP caster
+host          = "ntrip.example.com"
+port          = 2101
+mountpoint    = "BASE01"
+user          = "user"
+password      = "secret"
+rtcm_messages = "1004,1005,1006,1008,1012,1033,1230"
+reconnect     = true
+
+[[str2str.outputs]]
+name          = "ntrip_server"
+enabled       = false
+type          = "ntripsvr"      # run a local NTRIP server
+port          = 2101
+mountpoint    = "BASE01"
+user          = "admin"
+password      = "secret"
+rtcm_messages = ""
+reconnect     = true
+
+# ------------------------------------------------------------
+# [frontend] – layer 3: web frontend NMEA source
+#
+# The web frontend needs NMEA data for visualisation.
+# By default it connects to the ser2net TCP server which
+# delivers the mixed NMEA+RTCM3 stream. The frontend
+# filters out only the NMEA sentences itself.
+# ------------------------------------------------------------
+[frontend]
+
+[frontend.nmea_source]
+type          = "tcpcli"        # tcpcli | tcpsvr | serial | udp | ntrip | file
+host          = "127.0.0.1"
+port          = 4001            # → ser2net port (or another NMEA TCP server)
+
+# Alternative: direct serial:
+# type         = "serial"
+# device       = "/dev/ttyUSB0"
+# baudrate     = 115200
+
+# Alternative: TCP client to another server:
+# type         = "tcpcli"
+# host         = "192.168.1.50"
+# port         = 4001
+
+# Alternative: wait as a TCP server:
+# type         = "tcpsvr"
+# port         = 4002
+
+# Alternative: UDP:
+# type         = "udp"
+# port         = 4003
+
+# Web server settings
+[frontend.server]
+host          = "0.0.0.0"
+port          = 5000
+secret_key    = "change-me-in-production"
