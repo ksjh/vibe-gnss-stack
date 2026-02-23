@@ -6,7 +6,7 @@
 # Local overrides: systemctl edit gnss-dashboard
 #
 # The dashboard is completely independent of the gnss-stack service.
-# It starts even when ser2net/str2str are not running or misconfigured
+# It starts even when gnss-stack is not running or misconfigured
 # – the NMEA reader reconnects in the background.
 # ============================================================
 [Unit]

@@ -57,16 +57,12 @@ log_file      = "/var/log/gnss/manager.log"
 restart_delay = 5
 max_restarts  = 0
 
-[ser2net]
-enabled     = true
-binary      = "/usr/sbin/ser2net"
-device      = "/dev/ttyUSB0"
-baudrate    = 115200
-port        = 4001
-bind_addr   = "127.0.0.1"
-max_connections = 10
-timeout     = 0
-config_file = "/etc/gnss/ser2net.yaml"
+[str2str.input_bridge]
+enabled   = true
+device    = "/dev/ttyUSB0"
+baudrate  = 115200
+port      = 4001
+bind_addr = "127.0.0.1"
 
 [str2str]
 binary = "/usr/local/bin/str2str"
@@ -708,8 +704,7 @@ def api_processes():
     or queries systemd for process information.
     """
     try:
-        # Versuche, systemd-Unit-Infos für ser2net und str2str zu bekommen
-        units = ["ser2net", "gnss-stack", "str2str-manager"]
+        units = ["gnss-stack", "gnss-dashboard"]
         result = []
         for unit in units:
             r = subprocess.run(
@@ -807,10 +802,8 @@ _FALLBACK_HTML = """<!DOCTYPE html>
 def index():
     cfg = _load_toml(CONFIG_PATH)
     ctx = dict(
-        config_path     = CONFIG_PATH,
-        service_name    = SERVICE_NAME,
-        ser2net_enabled = cfg.get("ser2net", {}).get("enabled", False),
-        ser2net_port    = cfg.get("ser2net", {}).get("port",    4001),
+        config_path  = CONFIG_PATH,
+        service_name = SERVICE_NAME,
     )
     try:
         return render_template("index.html", **ctx)

@@ -10,14 +10,12 @@
 #   - System user    (gnss)   [optional: --remove-user]
 #   - Configuration  (/etc/gnss)  [optional: --remove-config]
 #   - Log files      (/var/log/gnss)  [optional: --remove-logs]
-#   - ser2net package  [optional: --remove-ser2net]
 #
 # Usage:
 #   sudo bash uninstall.sh                    # safe (config + logs kept)
 #   sudo bash uninstall.sh --remove-config    # including configuration
 #   sudo bash uninstall.sh --remove-logs      # including log files
 #   sudo bash uninstall.sh --remove-user      # including system user
-#   sudo bash uninstall.sh --remove-ser2net   # including ser2net package
 #   sudo bash uninstall.sh --all              # remove everything
 #   sudo bash uninstall.sh --dry-run          # show what would be done
 
@@ -37,7 +35,6 @@ GNSS_USER="gnss"
 REMOVE_CONFIG=false
 REMOVE_LOGS=false
 REMOVE_USER=false
-REMOVE_SER2NET=false
 DRY_RUN=false
 
 for arg in "$@"; do
@@ -45,10 +42,9 @@ for arg in "$@"; do
         --remove-config)  REMOVE_CONFIG=true ;;
         --remove-logs)    REMOVE_LOGS=true ;;
         --remove-user)    REMOVE_USER=true ;;
-        --remove-ser2net) REMOVE_SER2NET=true ;;
         --all)
             REMOVE_CONFIG=true; REMOVE_LOGS=true
-            REMOVE_USER=true;   REMOVE_SER2NET=true ;;
+            REMOVE_USER=true ;;
         --dry-run) DRY_RUN=true ;;
         --help|-h)
             grep '^#' "$0" | grep -v '#!/' | sed 's/^# \?//'; exit 0 ;;
@@ -97,7 +93,6 @@ echo "Options:"
 echo "  Configuration : $REMOVE_CONFIG  ($CFG_DIR)"
 echo "  Logs          : $REMOVE_LOGS    ($LOG_DIR)"
 echo "  User          : $REMOVE_USER    ($GNSS_USER)"
-echo "  ser2net       : $REMOVE_SER2NET"
 echo ""
 
 if [[ "$DRY_RUN" == false ]]; then
@@ -205,7 +200,7 @@ else
     info "Logs kept: $LOG_DIR  (--remove-logs)"
 fi
 
-# ── 6. User / ser2net ─────────────────────────────────────────────────────────
+# ── 6. Optional: system user ──────────────────────────────────────────────────
 echo ""
 echo "[ 6/6 ] Optional components…"
 
@@ -222,17 +217,6 @@ if [[ "$REMOVE_USER" == true ]]; then
     fi
 else
     info "User kept: $GNSS_USER  (--remove-user)"
-fi
-
-if [[ "$REMOVE_SER2NET" == true ]]; then
-    if dpkg -l ser2net &>/dev/null 2>&1; then
-        run apt-get remove -y ser2net
-        ok "ser2net removed"
-    else
-        skip "ser2net not installed via apt"
-    fi
-else
-    info "ser2net kept  (--remove-ser2net)"
 fi
 
 # ── Journal hint ──────────────────────────────────────────────────────────────

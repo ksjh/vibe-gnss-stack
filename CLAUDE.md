@@ -23,8 +23,8 @@ Serial GNSS receiver (/dev/ttyUSB0)
         │
         ▼
 ┌─────────────────────────────────────────────────────┐
-│ Layer 1: ser2net                                    │
-│   Exposes raw serial stream as a TCP server         │
+│ Layer 1: str2str input bridge                       │
+│   Reads serial port, exposes as TCP server          │
 │   TCP port: 4001 (default)                          │
 └───────────────────┬─────────────────────────────────┘
                     │ TCP (NMEA + RTCM3)
@@ -43,7 +43,7 @@ Serial GNSS receiver (/dev/ttyUSB0)
 ```
 
 **Two systemd services** — intentionally decoupled:
-- `gnss-stack.service` — manages ser2net + str2str (Layer 1 & 2)
+- `gnss-stack.service` — manages str2str input bridge + output processes (Layers 1 & 2)
 - `gnss-dashboard.service` — runs the Flask web app (Layer 3)
 
 The dashboard survives `gnss-stack` failures. The stack runs without the dashboard.
@@ -57,7 +57,7 @@ The dashboard survives `gnss-stack` failures. The stack runs without the dashboa
 ```
 vibe-gnss-stack/
 ├── app.py                  # Flask backend + NMEA readers (Layer 3)
-├── str2str_manager.py      # Process manager: ser2net + str2str (Layers 1 & 2)
+├── str2str_manager.py      # Process manager: str2str input bridge + outputs (Layers 1 & 2)
 ├── str2str.toml            # Reference/template configuration
 ├── requirements.txt        # Python dependencies
 ├── templates/
@@ -89,7 +89,7 @@ vibe-gnss-stack/
 | `GNSSState` | Thread-safe container for position, fix quality, satellite data. Call `gnss.to_dict()` to serialise. |
 | `NMEAReader` (ABC) | Abstract base for all NMEA data sources. Subclass and implement `_connect_and_read()`. |
 | `SerialReader` | Reads from a serial port. |
-| `TCPClientReader` | Connects to a TCP server (e.g. ser2net port 4001). |
+| `TCPClientReader` | Connects to a TCP server (e.g. str2str input bridge port 4001). |
 | `TCPServerReader` | Listens as a TCP server, accepts one client at a time. |
 | `UDPReader` | Listens on a UDP port. |
 | `NTRIPClientReader` | Connects to an NTRIP caster via HTTP 1.0. |
@@ -116,7 +116,7 @@ vibe-gnss-stack/
 | `GET` | `/api/service/status` | Returns `gnss-stack` service state from systemd |
 | `POST` | `/api/reader/restart` | Restarts the active NMEA reader (picks up new config) |
 | `GET` | `/api/reader/status` | Returns current reader type, info string, and connection status |
-| `GET` | `/api/processes` | Queries systemd for ser2net/gnss-stack unit states |
+| `GET` | `/api/processes` | Queries systemd for gnss-stack/gnss-dashboard unit states |
 
 **WebSocket** (Socket.IO):
 - Event `gnss_update` — emitted every 1 second by a background thread to all connected clients
@@ -128,12 +128,7 @@ vibe-gnss-stack/
 
 ### `str2str_manager.py` — Stack Process Manager
 
-**Two modes** (controlled by CLI flag):
-
-| Mode | Flag | systemd hook | Purpose |
-|---|---|---|---|
-| YAML generation | `--generate-yaml` | `ExecStartPre` | Converts `[ser2net]` TOML → `/etc/gnss/ser2net.yaml`. Non-zero exit prevents `ExecStart`. |
-| Normal start | *(none)* | `ExecStart` | Starts ser2net + one str2str process per enabled output. |
+Called as `ExecStart` in the systemd unit. Starts the str2str input bridge and one str2str process per enabled output.
 
 **Classes**:
 
@@ -146,7 +141,6 @@ vibe-gnss-stack/
 
 | Function | Purpose |
 |---|---|
-| `generate_ser2net_yaml(cfg)` | Builds ser2net v4+ YAML string from `[ser2net]` TOML dict |
 | `build_str2str_input_url(inp)` | Converts `[str2str.input]` dict → str2str `-in` URL |
 | `build_str2str_output_url(out)` | Converts `[[str2str.outputs]]` dict → str2str `-out` URL |
 | `build_str2str_cmd(binary, input_url, out)` | Assembles full str2str command list including `-msg` filter and `-t` swap interval |
@@ -191,16 +185,12 @@ log_file      = "/var/log/gnss/manager.log"
 restart_delay = 5              # seconds between restart attempts
 max_restarts  = 0              # 0 = unlimited
 
-[ser2net]
-enabled     = true
-binary      = "/usr/sbin/ser2net"
-device      = "/dev/ttyUSB0"
-baudrate    = 115200
-port        = 4001
-bind_addr   = "127.0.0.1"
-max_connections = 10
-timeout     = 0
-config_file = "/etc/gnss/ser2net.yaml"   # AUTO-GENERATED — do not edit manually
+[str2str.input_bridge]
+enabled   = true
+device    = "/dev/ttyUSB0"
+baudrate  = 115200
+port      = 4001
+bind_addr = "127.0.0.1"
 
 [str2str]
 binary = "/usr/local/bin/str2str"
@@ -234,7 +224,6 @@ secret_key = "change-me-in-production"
 ```
 
 **Critical rules**:
-- `/etc/gnss/ser2net.yaml` is **auto-generated** on every `gnss-stack` start. Never edit it directly.
 - Config saves via the web UI create a timestamped backup (`.toml.bak.<timestamp>`) before overwriting.
 - TOML syntax is validated before saving (server-side via `tomllib.loads()`).
 
@@ -256,9 +245,6 @@ GNSS_CONFIG=./str2str.toml python app.py
 
 # Run stack manager in dev mode
 GNSS_CONFIG=./str2str.toml python str2str_manager.py --config ./str2str.toml
-
-# Generate ser2net YAML only (ExecStartPre simulation)
-python str2str_manager.py --config ./str2str.toml --generate-yaml
 
 # Full system install (creates gnss user, systemd units, /opt/gnss/, /etc/gnss/, /var/log/gnss/)
 sudo ./install.sh
@@ -322,7 +308,7 @@ Add a Flask route to `app.py`. Follow the pattern of existing routes: return `js
 
 - **NMEA parsing**: Run `app.py` with `GNSS_CONFIG` pointing to a config with `type = "file"` in `[frontend.nmea_source]` and a sample NMEA log file. Check `/api/gnss` returns parsed data.
 - **Config save**: POST to `/api/config` with valid/invalid TOML and verify backup creation and error responses.
-- **Stack manager**: Run `str2str_manager.py --generate-yaml` and verify `/etc/gnss/ser2net.yaml` is created correctly.
+- **Stack manager**: Run `str2str_manager.py --config ./str2str.toml` with a real serial device configured and verify the input bridge and output processes start correctly.
 - **Service control**: Requires systemd; test with actual `gnss-stack.service` and `gnss-dashboard.service`.
 - **WebSocket**: Open the dashboard in a browser and observe live updates in the Map and Satellites tabs.
 
@@ -336,7 +322,6 @@ When adding new logic, add a `# TEST: <how to verify this manually>` comment nea
 - Code: `/opt/gnss/` (installed by `install.sh`)
 - Config: `/etc/gnss/str2str.toml`
 - Logs: `/var/log/gnss/`
-- Auto-generated ser2net config: `/etc/gnss/ser2net.yaml`
 
 **System user**: Services run as `gnss` (system user), group `dialout` (for serial port access).
 
@@ -374,6 +359,5 @@ This is installed at `/etc/sudoers.d/gnss-systemctl` by `install.sh`.
 | pyserial | ≥3.5 | Serial port access |
 | eventlet | ≥0.35 | In requirements but SocketIO uses `threading` mode |
 | tomli | ≥2.0 | TOML parser for Python <3.11 |
-| str2str (RTKLIB) | any | GNSS data streaming binary |
-| ser2net | v4+ | Serial-to-TCP bridge |
+| str2str (RTKLIB) | any | GNSS data streaming binary (input bridge + outputs) |
 | systemd | any | Service management |

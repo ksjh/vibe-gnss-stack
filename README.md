@@ -12,7 +12,7 @@ The code is likely to evolve, I am not done yet with my experiment.
 
 The Vibe GNSS Stack provides a three-layer pipeline for GNSS data:
 
-1. **Serial to Network (ser2net)**: Converts serial GNSS data to TCP streams
+1. **Input Bridge (str2str)**: Reads the serial GNSS receiver and exposes it as a TCP server
 2. **Data Streaming (str2str)**: Filters and distributes RTCM3/NMEA data to multiple outputs
 3. **Web Dashboard**: Real-time visualization and configuration interface
 
@@ -25,14 +25,13 @@ The Vibe GNSS Stack provides a three-layer pipeline for GNSS data:
 - **Web-based Configuration**: Edit TOML config through the dashboard
 - **Systemd Integration**: Automatic service management
 - **Process Monitoring**: Status tracking for all managed processes
-- **Serial Device Support**: Direct serial port access via ser2net
+- **Serial Device Support**: Direct serial port access via str2str input bridge
 
 ## Prerequisites
 
 - Linux system with systemd
 - Python 3.8+
 - RTKLIB (str2str binary)
-- ser2net v4+ (for YAML configuration)
 
 ## Installation
 
@@ -48,7 +47,7 @@ The Vibe GNSS Stack provides a three-layer pipeline for GNSS data:
    ```
 
    This will:
-   - Install system dependencies (ser2net, Python venv)
+   - Install system dependencies (Python venv)
    - Create a dedicated `gnss` user
    - Set up systemd services
    - Install Python dependencies in a virtual environment
@@ -68,13 +67,13 @@ restart_delay = 5
 max_restarts = 0
 ```
 
-### Serial Device (ser2net)
+### Input Bridge (str2str serial → TCP)
 ```toml
-[ser2net]
-enabled = true
-device = "/dev/ttyUSB0"
+[str2str.input_bridge]
+enabled  = true
+device   = "/dev/ttyUSB0"
 baudrate = 115200
-port = 4001
+port     = 4001
 ```
 
 ### Data Streaming (str2str)
@@ -129,7 +128,7 @@ port = 9001
 
 ## Supported GNSS Data Sources
 
-- Serial devices (direct or via ser2net)
+- Serial devices (via str2str input bridge or direct)
 - TCP client/server
 - UDP streams
 - NTRIP clients
@@ -178,7 +177,7 @@ port = 9001
 ### Project Structure
 
 - `app.py` - Flask backend and WebSocket server
-- `str2str_manager.py` - Process manager for ser2net and str2str
+- `str2str_manager.py` - Process manager for str2str (input bridge + outputs)
 - `templates/index.html` - Web dashboard frontend
 - `install.sh` - Installation script
 - `uninstall.sh` - Uninstallation script
