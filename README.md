@@ -201,5 +201,4 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 - Built on [RTKLIB](http://www.rtklib.com/) by T. Takasu
 - Uses [Flask](https://flask.palletsprojects.com/) and [Flask-SocketIO](https://flask-socketio.readthedocs.io/)
-- Web interface powered by [Leaflet](https://leafletjs.com/) and [Chart.js](https://www.chartjs.org/)</content>
-<parameter name="filePath">c:\Users\ksjh\Documents\github\vibe-gnss-stack\README.md
+- Web interface powered by [Leaflet](https://leafletjs.com/) and [Chart.js](https://www.chartjs.org/)
