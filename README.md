@@ -16,7 +16,7 @@ The Vibe GNSS Stack provides a three-layer pipeline for GNSS data:
 2. **Data Streaming (str2str)**: Filters and distributes RTCM3/NMEA data to multiple outputs
 3. **Web Dashboard**: Real-time visualization and configuration interface
 
-[architecture](architecture.png)
+![architecture](architecture.png)
 
 ## Features
 
