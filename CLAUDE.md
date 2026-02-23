@@ -211,6 +211,41 @@ reconnect     = true
 # path         = "/var/log/gnss/rtcm3_%Y%m%d_%H%M%S.rtcm3"
 # swap_interval = 86400
 
+[rinex]
+binary     = "/usr/local/bin/convbin"
+format     = "rtcm3"      # input format: rtcm3 | rtcm2 | ubx | nov | oem3 | hemis | binex | ...
+version    = "3.03"       # RINEX output version: 2.11 | 3.03 | 3.04
+output_dir = "/var/log/gnss/rinex"
+
+[rinex.marker]
+name   = ""               # station ID (up to 9 chars in RINEX 3)
+number = ""               # monument/marker number
+type   = "GEODETIC"       # GEODETIC | NON-GEODETIC | NON-PHYSICAL | SPACEBORNE | etc.
+
+[rinex.observer]
+name   = ""               # observer name
+agency = ""               # institution/agency
+
+[rinex.receiver]
+serial  = ""              # receiver serial number
+type    = ""              # receiver model, e.g. "u-blox ZED-F9P"
+version = ""              # firmware version
+
+[rinex.antenna]
+serial  = ""              # antenna serial number
+type    = ""              # full IGS code, e.g. "TRM59800.00     NONE"
+delta_h = 0.0             # height above ARP (m)
+delta_e = 0.0             # east offset from ARP (m)
+delta_n = 0.0             # north offset from ARP (m)
+
+[rinex.position]          # approximate ECEF position (ITRF, metres)
+x = 0.0
+y = 0.0
+z = 0.0
+
+[rinex.header]
+comment = ""              # free-text comment line(s) for RINEX header
+
 [frontend.nmea_source]
 type = "tcpcli"   # tcpcli | tcpsvr | serial | udp | ntrip | file
 host = "127.0.0.1"

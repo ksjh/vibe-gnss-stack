@@ -104,6 +104,41 @@ password      = "secret"
 rtcm_messages = "1004,1005,1006,1008,1012,1033,1230"
 reconnect     = true
 
+[rinex]
+binary     = "/usr/local/bin/convbin"
+format     = "rtcm3"
+version    = "3.03"
+output_dir = "/var/log/gnss/rinex"
+
+[rinex.marker]
+name   = ""
+number = ""
+type   = "GEODETIC"
+
+[rinex.observer]
+name   = ""
+agency = ""
+
+[rinex.receiver]
+serial  = ""
+type    = ""
+version = ""
+
+[rinex.antenna]
+serial  = ""
+type    = ""
+delta_h = 0.0
+delta_e = 0.0
+delta_n = 0.0
+
+[rinex.position]
+x = 0.0
+y = 0.0
+z = 0.0
+
+[rinex.header]
+comment = ""
+
 [frontend.nmea_source]
 type = "tcpcli"
 host = "127.0.0.1"

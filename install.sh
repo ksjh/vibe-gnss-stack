@@ -126,6 +126,41 @@ bind_addr = "0.0.0.0"
 rtcm_messages = "1005,1074,1077,1084,1087,1094,1097,1124,1127,1230"
 reconnect = true
 
+[rinex]
+binary     = "/usr/local/bin/convbin"
+format     = "rtcm3"
+version    = "3.03"
+output_dir = "/var/log/gnss/rinex"
+
+[rinex.marker]
+name   = ""
+number = ""
+type   = "GEODETIC"
+
+[rinex.observer]
+name   = ""
+agency = ""
+
+[rinex.receiver]
+serial  = ""
+type    = ""
+version = ""
+
+[rinex.antenna]
+serial  = ""
+type    = ""
+delta_h = 0.0
+delta_e = 0.0
+delta_n = 0.0
+
+[rinex.position]
+x = 0.0
+y = 0.0
+z = 0.0
+
+[rinex.header]
+comment = ""
+
 [frontend.nmea_source]
 type = "tcpcli"
 host = "127.0.0.1"

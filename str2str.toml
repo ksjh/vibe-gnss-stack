@@ -133,6 +133,92 @@ rtcm_messages = ""
 reconnect     = true
 
 # ------------------------------------------------------------
+# [rinex] – RINEX conversion via convbin (RTKLIB)
+#
+# convbin converts a raw receiver file produced by the file_logger
+# output above into RINEX observation and navigation files.
+#
+# convbin is NOT run automatically by the stack manager yet –
+# this section defines the metadata that will be written into
+# the RINEX header when convbin support is added.
+# ------------------------------------------------------------
+[rinex]
+binary     = "/usr/local/bin/convbin"
+
+# Input format of the raw file to convert.
+# rtcm3 is correct when the file_logger output captures the RTCM3 stream.
+# Other options: rtcm2 | ubx | nov | oem3 | hemis | binex | rt17 | sbf | rinex
+format     = "rtcm3"
+
+# RINEX version to emit (2.11 | 3.03 | 3.04)
+version    = "3.03"
+
+# Directory where RINEX files are written
+output_dir = "/var/log/gnss/rinex"
+
+# ------------------------------------------------------------------
+# RINEX MARKER record  (convbin -hm / -hn / -ht)
+# ------------------------------------------------------------------
+[rinex.marker]
+name   = ""            # station identifier, e.g. "SITE" (up to 9 chars for RINEX 3)
+number = ""            # monument / marker number
+type   = "GEODETIC"    # GEODETIC | NON-GEODETIC | NON-PHYSICAL | SPACEBORNE | etc.
+
+# ------------------------------------------------------------------
+# RINEX OBSERVER / AGENCY record  (convbin -ho "name/agency")
+# ------------------------------------------------------------------
+[rinex.observer]
+name   = ""            # observer / operator name
+agency = ""            # institution / agency
+
+# ------------------------------------------------------------------
+# RINEX REC # / TYPE / VERS record  (convbin -hr "serial/type/version")
+# ------------------------------------------------------------------
+[rinex.receiver]
+serial  = ""           # receiver serial number
+type    = ""           # receiver model, e.g. "u-blox ZED-F9P"
+version = ""           # firmware version, e.g. "1.32"
+
+# ------------------------------------------------------------------
+# RINEX ANT # / TYPE record + antenna delta  (convbin -ha / -hd)
+#
+# Use the full IGS antenna code for 'type' so that post-processing
+# tools can look up the correct phase centre corrections from an
+# ANTEX file (e.g. IGS14_2196.atx).
+# Format: <type padded to 15 chars> <radome code>
+# Example: "TRM59800.00     NONE"
+# ------------------------------------------------------------------
+[rinex.antenna]
+serial  = ""           # antenna serial number
+type    = ""           # IGS antenna code + radome, e.g. "TRM59800.00     NONE"
+
+# Offset from the Antenna Reference Point (ARP) in metres.
+# delta_h is the vertical distance from the monument/marker to the ARP.
+# delta_e / delta_n are horizontal offsets (positive east / north).
+delta_h = 0.0
+delta_e = 0.0
+delta_n = 0.0
+
+# ------------------------------------------------------------------
+# RINEX APPROX POSITION XYZ record  (convbin -hp "x/y/z")
+#
+# ECEF Cartesian coordinates in the ITRF frame, metres.
+# Used only as an approximate reference in the RINEX header;
+# it does not affect the raw observations.
+# ------------------------------------------------------------------
+[rinex.position]
+x = 0.0
+y = 0.0
+z = 0.0
+
+# ------------------------------------------------------------------
+# Optional free-text comment lines added to the RINEX header
+# (convbin -hc).  Use a multi-line TOML string for multiple lines.
+# ------------------------------------------------------------------
+[rinex.header]
+comment = ""
+
+# ------------------------------------------------------------
 # [frontend] – layer 3: web frontend NMEA source
 #
 # The web frontend needs NMEA data for visualisation.
