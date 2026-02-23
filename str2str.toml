@@ -76,7 +76,12 @@ enabled       = true
 type          = "tcpsvr"
 port          = 9001
 bind_addr     = "0.0.0.0"      # "" or "0.0.0.0" = all interfaces
-rtcm_messages = ""             # empty = all; e.g. "1004,1005,1006,1008,1012,1033,1230"
+# Common RTK messages – MSM4 observables + base position + GLONASS biases.
+# 1005 = base station ARP position (essential for RTK)
+# 1074/1084/1094/1124 = GPS/GLONASS/Galileo/BeiDou MSM4 observables
+# 1230 = GLONASS L1/L2 code-phase biases
+# Set to "" to forward everything (including raw NMEA sentences from the bridge).
+rtcm_messages = "1005,1074,1084,1094,1124,1230"
 reconnect     = true
 
 [[str2str.outputs]]
