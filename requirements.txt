@@ -1,0 +1,6 @@
+flask>=3.0
+flask-socketio>=5.3
+pyserial>=3.5
+eventlet>=0.35
+# For Python < 3.11:
+tomli>=2.0; python_version < "3.11"
