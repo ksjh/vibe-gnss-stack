@@ -12,6 +12,10 @@ Provides:
   - REST /api/service/*:    str2str-manager systemd control
   - REST /api/reader/*:     NMEA reader restart / status
   - REST /api/processes:    Status of all managed processes
+  - REST /api/logs:         List raw log / RINEX files
+  - REST /api/logs/download/<file>:         Download a log file
+  - REST /api/logs/convert/<file>:          Convert RTCM3 → RINEX via convbin (async)
+  - REST /api/logs/convert/status/<job>:    Poll conversion job status
 """
 
 import io
@@ -25,7 +29,7 @@ from datetime import datetime
 from pathlib import Path
 
 import serial
-from flask import Flask, jsonify, render_template, render_template_string, make_response, request
+from flask import Flask, jsonify, render_template, render_template_string, make_response, request, send_file
 from jinja2.exceptions import TemplateNotFound
 from flask_socketio import SocketIO
 
@@ -193,10 +197,27 @@ class GNSSState:
         self.utc         = None
         self.satellites  = {}
         self.used_prns   = set()
+        self.faulty_prns = set()   # PRNs flagged by GBS (RAIM) or with SNR=0
+        self.gsv_seen    = {}      # {system:freq → set of sat keys} for stale removal
         self.last_update = None
         self.source_type = "none"
         self.source_info = ""
         self.source_ok   = False
+
+    def reset(self):
+        """Clears all position/satellite state – called on connection loss so the
+        frontend does not display stale data."""
+        with self.lock:
+            self.lat = self.lon = self.alt = None
+            self.fix         = 0
+            self.hdop = self.pdop = None
+            self.satellites  = {}
+            self.used_prns   = set()
+            self.faulty_prns = set()
+            self.gsv_seen    = {}
+            self.speed_knots = None
+            self.track       = None
+            self.source_ok   = False
 
     def to_dict(self) -> dict:
         with self.lock:
@@ -206,6 +227,7 @@ class GNSSState:
                 speed_knots=self.speed_knots, track=self.track, utc=self.utc,
                 satellites=dict(self.satellites),
                 used_prns=list(self.used_prns),
+                faulty_prns=list(self.faulty_prns),
                 last_update=self.last_update,
                 source_type=self.source_type,
                 source_info=self.source_info,
@@ -218,6 +240,11 @@ gnss = GNSSState()
 # ──────────────────────────────────────────────────────────────────────────────
 # NMEA Parser
 # ──────────────────────────────────────────────────────────────────────────────
+# NMEA 4.11 System-ID field at end of GSA sentences → constellation name.
+# Required when talker is "GN" (multi-constellation).
+GSA_SYSTEM_ID = {
+    1:"GPS", 2:"GLONASS", 3:"Galileo", 4:"BeiDou", 5:"QZSS", 6:"NavIC",
+}
 CONSTELLATION_MAP = {
     "GP":"GPS","GN":"Multi","GL":"GLONASS",
     "GA":"Galileo","GB":"BeiDou","GQ":"QZSS","BD":"BeiDou",
@@ -226,7 +253,24 @@ SYSTEM_COLORS = {
     "GPS":"#00d4ff","GLONASS":"#ff6b35","Galileo":"#7cff6b",
     "BeiDou":"#ffd700","QZSS":"#ff69b4","Multi":"#aaaaaa",
 }
-FREQ_MAP = {1:"L1",2:"L2",3:"L5",4:"L1C",5:"E1",6:"E5a",7:"E5b",8:"B1",9:"B2",10:"B3"}
+
+# Signal-ID → signal name per constellation.
+# Source: Quectel LG29xP/LGx80P Protocol Specification Table 27
+# (verified against Unicore UM980 – both receivers use the same numbering).
+# BDS B2I uses Signal-ID 0xB (hex), so int conversion with base=0 is needed.
+FREQ_MAP = {
+    "GPS":     {1:"L1C/A", 4:"L1C",  6:"L2C",  8:"L5I", 9:"L5Q"},
+    "GLONASS": {1:"G1",    3:"G2"},
+    "Galileo": {1:"E5a",   2:"E5b",  5:"E6",   7:"E1"},
+    "BeiDou":  {1:"B1I",   3:"B1C",  5:"B2a",  6:"B2b",  8:"B3I", 11:"B2I"},
+    "QZSS":    {1:"L1C/A", 6:"L2C",  8:"L5"},
+    "NavIC":   {1:"L5"},
+}
+
+
+def _signal_name(system, signal_id):
+    """Returns signal name for a constellation + signal ID. Unknown IDs → 'sig<n>'."""
+    return FREQ_MAP.get(system, {}).get(signal_id, "sig{}".format(signal_id))
 
 
 def _chk(s: str) -> bool:
@@ -268,6 +312,9 @@ def process_nmea(sentence: str):
 
     with gnss.lock:
         if msg_type == "GGA" and len(parts) >= 10:
+            # New epoch: clear per-epoch sets
+            gnss.used_prns   = set()
+            gnss.faulty_prns = set()
             gnss.lat = _ll(parts[2], parts[3])
             gnss.lon = _ll(parts[4], parts[5])
             try:
@@ -289,49 +336,110 @@ def process_nmea(sentence: str):
                 pass
 
         elif msg_type == "GSA" and len(parts) >= 18:
-            used = set()
+            # Store PRNs with system prefix so GPS:1 ≠ BeiDou:1.
+            # Multiple GSA sentences per epoch (one per constellation) →
+            # accumulate rather than overwrite. Reset happens on GGA.
+            #
+            # NMEA 4.11: optional System-ID field after VDOP (parts[18]).
+            # Mandatory when talker is "GN" (multi-constellation) to
+            # identify which constellation's PRNs are listed.
+            gsa_system = system
+            try:
+                sys_field = parts[18].split("*")[0].strip()
+                if sys_field:
+                    gsa_system = GSA_SYSTEM_ID.get(int(sys_field), system)
+            except (IndexError, ValueError):
+                pass
             for p in parts[3:15]:
                 try:
-                    if p.strip(): used.add(int(p.strip()))
+                    if p.strip():
+                        gnss.used_prns.add("{}:{}".format(gsa_system, int(p.strip())))
                 except ValueError:
                     pass
-            gnss.used_prns = used
             try:
                 gnss.pdop = float(parts[15]) if parts[15] else None
             except (ValueError, IndexError):
                 pass
 
-        elif msg_type == "GSV" and len(parts) >= 4:
-            freq = "L1"
+        elif msg_type == "GBS" and len(parts) >= 7:
+            # GNSS Satellite Fault Detection (RAIM) – field 5 = suspect PRN.
             try:
-                freq = FREQ_MAP.get(int(parts[-1].split("*")[0]), "L1")
+                prn_s = parts[5].strip()
+                if prn_s:
+                    gnss.faulty_prns.add("{}:{}".format(system, int(prn_s)))
             except (ValueError, IndexError):
                 pass
-            idx = 4
-            while idx + 3 <= len(parts):
+
+        elif msg_type == "GSV" and len(parts) >= 4:
+            # GSV structure (NMEA 4.10/4.11):
+            #   $xxGSV, total_msgs, msg_nr, total_sats,
+            #   [prn, el, az, snr] × 1..4,  [signal_id]*checksum  ← 4.11 only
+            #
+            # Stale removal: on the last message of a sequence (msg_nr ==
+            # total_msgs) delete all entries for this system:freq that were
+            # NOT reported in this sequence.
+            try:
+                total_msgs = int(parts[1])
+                msg_nr     = int(parts[2])
+            except (ValueError, IndexError):
+                total_msgs = msg_nr = 1
+
+            clean_parts = parts[:-1] + [parts[-1].split("*")[0]]
+            n_extra = (len(clean_parts) - 4) % 4
+            freq = "L1C/A"
+            if n_extra == 1:
+                # NMEA 4.11: Signal-ID field at the end.
+                # BDS B2I has signal ID 0xB (single hex digit without 0x prefix).
                 try:
-                    prn_s = parts[idx].strip()
+                    raw = clean_parts[-1].strip()
+                    sig_id = int(raw, 16) if (len(raw) == 1 and raw.upper() in "ABCDEF") \
+                             else int(raw, 0)
+                    freq = _signal_name(system, sig_id)
+                except (ValueError, IndexError):
+                    pass
+            # n_extra == 0: NMEA 4.10 → no signal-ID field, freq stays "L1C/A"
+
+            seq_key = "{}:{}".format(system, freq)
+            if msg_nr == 1:
+                gnss.gsv_seen[seq_key] = set()
+
+            idx = 4
+            while idx + 3 <= len(clean_parts):
+                try:
+                    prn_s = clean_parts[idx].strip()
                     if prn_s:
-                        prn = int(prn_s)
-                        key = f"{system}:{prn}"
-                        el = int(parts[idx+1]) if parts[idx+1].strip() else 0
-                        az = int(parts[idx+2]) if parts[idx+2].strip() else 0
-                        gnss.satellites.setdefault(key, {}).update(dict(
-                            prn=prn,
-                            el=el,
-                            az=az,
-                            snr=int(parts[idx+3].split("*")[0]) if parts[idx+3].split("*")[0].strip() else 0,
-                            system=system,
-                            color=SYSTEM_COLORS.get(system,"#fff"),
-                            freq=freq, ts=now,
-                            valid=not (el == 0 and az == 0),
-                        ))
+                        prn   = int(prn_s)
+                        snr_s = clean_parts[idx+3].strip()
+                        snr   = int(snr_s) if snr_s else 0
+                        key   = "{}:{}:{}".format(system, prn, freq)
+                        gnss.satellites[key] = dict(
+                            prn    = prn,
+                            el     = int(clean_parts[idx+1]) if clean_parts[idx+1].strip() else 0,
+                            az     = int(clean_parts[idx+2]) if clean_parts[idx+2].strip() else 0,
+                            snr    = snr,
+                            system = system,
+                            color  = SYSTEM_COLORS.get(system, "#fff"),
+                            freq   = freq,
+                            ts     = now,
+                            healthy= snr > 0,
+                        )
+                        gnss.gsv_seen.setdefault(seq_key, set()).add(key)
                 except (ValueError, IndexError):
                     pass
                 idx += 4
-            stale = [k for k,v in gnss.satellites.items() if v.get("ts",now) < now-30]
-            for k in stale:
-                del gnss.satellites[k]
+
+            if msg_nr == total_msgs:
+                # Last message in sequence: remove entries for this system+freq
+                # that were not reported this round.
+                seq_sys, seq_freq = seq_key.split(":", 1)
+                seen  = gnss.gsv_seen.get(seq_key, set())
+                stale = [k for k, v in gnss.satellites.items()
+                         if v.get("system") == seq_sys
+                         and v.get("freq")   == seq_freq
+                         and k not in seen]
+                for k in stale:
+                    del gnss.satellites[k]
+                gnss.gsv_seen.pop(seq_key, None)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -375,6 +483,9 @@ class NMEAReader(ABC):
             except Exception as e:
                 app.logger.warning("[%s] %s – retrying in %ds",
                                    self.source_type, e, self.RECONNECT_DELAY)
+            # Connection lost or errored – clear state so the frontend does
+            # not continue showing stale satellite / position data.
+            gnss.reset()
             if self._running:
                 time.sleep(self.RECONNECT_DELAY)
 
@@ -758,6 +869,196 @@ def api_processes():
         return jsonify({"ok":True,"processes":result})
     except Exception as e:
         return jsonify({"ok":False,"error":str(e)})
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Logs & RINEX conversion
+# ──────────────────────────────────────────────────────────────────────────────
+_ALLOWED_EXT = {".rtcm3", ".ubx", ".obs", ".nav", ".rnx", ".21o", ".22o", ".23o",
+                ".21n", ".22n", ".23n"}
+
+_conv_jobs = {}   # job_key → {done, ok, returncode, stdout, stderr, src, out_dir}
+
+
+def _log_dir():
+    """Returns the directory where raw log files are written.
+    Reads the path from the file_logger output in [[str2str.outputs]],
+    falling back to /var/log/gnss."""
+    try:
+        cfg = _load_toml(CONFIG_PATH)
+        for out in cfg.get("str2str", {}).get("outputs", []):
+            if out.get("name") == "file_logger" and out.get("path"):
+                return Path(out["path"]).parent
+    except Exception:
+        pass
+    return Path("/var/log/gnss")
+
+
+def _rinex_dir():
+    """Returns the RINEX output directory from [rinex].output_dir."""
+    try:
+        cfg = _load_toml(CONFIG_PATH)
+        d = cfg.get("rinex", {}).get("output_dir")
+        if d:
+            return Path(d)
+    except Exception:
+        pass
+    return Path("/var/log/gnss/rinex")
+
+
+def _safe_log_path(filename):
+    """Returns the absolute path if the file lives in the log or RINEX dir
+    and has an allowed extension; None otherwise."""
+    try:
+        for d in (_log_dir(), _rinex_dir()):
+            p = (d / filename).resolve()
+            if p.parent == d.resolve() and p.suffix in _ALLOWED_EXT:
+                return p
+    except Exception:
+        pass
+    return None
+
+
+@app.route("/api/logs", methods=["GET"])
+def api_logs_list():
+    """List raw log and RINEX files available for download."""
+    files = []
+    for d in (_log_dir(), _rinex_dir()):
+        if not d.exists():
+            continue
+        for p in sorted(d.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
+            if p.suffix in _ALLOWED_EXT and p.is_file():
+                st = p.stat()
+                files.append({
+                    "name":  p.name,
+                    "size":  st.st_size,
+                    "mtime": st.st_mtime,
+                    "dir":   str(d),
+                })
+    return jsonify({"ok": True, "files": files})
+
+
+@app.route("/api/logs/download/<path:filename>", methods=["GET"])
+def api_logs_download(filename):
+    """Download a log file."""
+    p = _safe_log_path(filename)
+    if not p or not p.exists():
+        return jsonify({"ok": False, "error": "file not found"}), 404
+    return send_file(p, as_attachment=True, download_name=p.name)
+
+
+@app.route("/api/logs/convert/<path:filename>", methods=["POST"])
+def api_logs_convert(filename):
+    """Convert a raw RTCM3 file to RINEX using convbin.
+
+    Optional JSON body:
+      rinex_ver  – override RINEX version (e.g. "2.11"); default from [rinex].version
+      obs_types  – convbin -y output obs types (default: "ong")
+
+    Returns a job key; poll GET /api/logs/convert/status/<key> for the result.
+    # TEST: POST to this endpoint with a .rtcm3 file in the log dir, then poll
+    #       /api/logs/convert/status/<key> and check stdout/stderr from convbin.
+    """
+    p = _safe_log_path(filename)
+    if not p or not p.exists():
+        return jsonify({"ok": False, "error": "source file not found"}), 404
+
+    data      = request.get_json(silent=True) or {}
+    job_key   = "{}_{}".format(filename, int(time.time()))
+    _conv_jobs[job_key] = {"done": False}
+
+    def run_conversion(src_path, key):
+        cfg       = _load_toml(CONFIG_PATH)
+        rcfg      = cfg.get("rinex", {})
+
+        binary    = rcfg.get("binary",     "/usr/local/bin/convbin")
+        fmt       = rcfg.get("format",     "rtcm3")
+        ver       = data.get("rinex_ver") or rcfg.get("version", "3.03")
+        out_dir   = Path(rcfg.get("output_dir", str(src_path.parent)))
+        obs_types = data.get("obs_types", "ong")   # o=obs, n=GPS-nav, g=GLO-nav
+
+        try:
+            out_dir.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            _conv_jobs[key] = {"done": True, "ok": False,
+                               "returncode": -1, "stdout": "", "stderr": str(e),
+                               "src": src_path.name, "out_dir": str(out_dir)}
+            return
+
+        cmd = [binary, "-r", fmt, "-v", ver, "-os", "-od",
+               "-f", obs_types, "-d", str(out_dir)]
+
+        # RINEX header fields from [rinex.*] config
+        marker = rcfg.get("marker", {})
+        if marker.get("name"):
+            cmd += ["-hm", marker["name"]]
+        if marker.get("number"):
+            cmd += ["-hn", marker["number"]]
+        if marker.get("type"):
+            cmd += ["-ht", marker["type"]]
+
+        obs = rcfg.get("observer", {})
+        if obs.get("name") or obs.get("agency"):
+            cmd += ["-ho", "{}/{}".format(obs.get("name", ""), obs.get("agency", ""))]
+
+        rec = rcfg.get("receiver", {})
+        if any(rec.get(k) for k in ("serial", "type", "version")):
+            cmd += ["-hr", "{}/{}/{}".format(
+                rec.get("serial", ""), rec.get("type", ""), rec.get("version", ""))]
+
+        ant = rcfg.get("antenna", {})
+        if ant.get("serial") or ant.get("type"):
+            cmd += ["-ha", "{}/{}".format(ant.get("serial", ""), ant.get("type", ""))]
+        dh = ant.get("delta_h", 0.0)
+        de = ant.get("delta_e", 0.0)
+        dn = ant.get("delta_n", 0.0)
+        if dh or de or dn:
+            cmd += ["-hd", "{}/{}/{}".format(dh, de, dn)]
+
+        pos = rcfg.get("position", {})
+        x, y, z = pos.get("x", 0.0), pos.get("y", 0.0), pos.get("z", 0.0)
+        if x or y or z:
+            cmd += ["-hp", "{}/{}/{}".format(x, y, z)]
+
+        comment = rcfg.get("header", {}).get("comment", "")
+        if comment:
+            cmd += ["-hc", comment]
+
+        cmd.append(str(src_path))
+
+        app.logger.info("convbin: %s", " ".join(cmd))
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            _conv_jobs[key] = {
+                "done":       True,
+                "ok":         result.returncode == 0,
+                "returncode": result.returncode,
+                "stdout":     result.stdout[-4000:],
+                "stderr":     result.stderr[-4000:],
+                "src":        src_path.name,
+                "out_dir":    str(out_dir),
+            }
+            app.logger.info("convbin rc=%d for %s", result.returncode, src_path.name)
+        except subprocess.TimeoutExpired:
+            _conv_jobs[key] = {"done": True, "ok": False, "returncode": -1,
+                               "stdout": "", "stderr": "timeout after 300s",
+                               "src": src_path.name, "out_dir": str(out_dir)}
+        except Exception as e:
+            _conv_jobs[key] = {"done": True, "ok": False, "returncode": -1,
+                               "stdout": "", "stderr": str(e),
+                               "src": src_path.name, "out_dir": str(out_dir)}
+
+    threading.Thread(target=run_conversion, args=(p, job_key), daemon=True).start()
+    return jsonify({"ok": True, "job": job_key})
+
+
+@app.route("/api/logs/convert/status/<path:job_key>", methods=["GET"])
+def api_logs_convert_status(job_key):
+    """Poll the status of a convbin conversion job."""
+    job = _conv_jobs.get(job_key)
+    if job is None:
+        return jsonify({"ok": False, "error": "job not found"}), 404
+    return jsonify({"ok": True, **job})
 
 
 # ──────────────────────────────────────────────────────────────────────────────

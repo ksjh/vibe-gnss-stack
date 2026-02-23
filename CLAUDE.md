@@ -99,9 +99,15 @@ vibe-gnss-stack/
 - `process_nmea(sentence)` — parses one NMEA sentence, updates global `gnss` state
 - `_chk(s)` — NMEA checksum validation
 - `_ll(v, h)` — converts NMEA lat/lon format (DDMM.MMMM) to decimal degrees
-- Sentences handled: `GGA`, `RMC`, `GSA`, `GSV`
+- `_signal_name(system, signal_id)` — maps signal ID integer to name (e.g. `"L1C/A"`, `"E1"`)
+- Sentences handled: `GGA`, `RMC`, `GSA`, `GSV`, `GBS`
 - RTCM3 binary data is silently ignored (non-ASCII filtered out)
-- Satellite entries expire after 30 seconds
+- Satellite dict keys are `"system:prn:freq"` (e.g. `"GPS:5:L1C/A"`) — allows multi-frequency tracking
+- `GNSSState.faulty_prns` — PRNs flagged by GBS (RAIM fault detection)
+- `GNSSState.gsv_seen` — tracks which sats were reported each GSV sequence for precise stale removal
+- `GNSSState.reset()` — clears all position/satellite state; called on reader connection loss
+- GSA PRNs stored as `"system:prn"` (NMEA 4.11 system-ID field used to disambiguate GN talker)
+- GSV stale removal: entries are deleted at end of each sequence, not by age
 
 **REST API routes**:
 
@@ -116,6 +122,10 @@ vibe-gnss-stack/
 | `POST` | `/api/reader/restart` | Restarts the active NMEA reader (picks up new config) |
 | `GET` | `/api/reader/status` | Returns current reader type, info string, and connection status |
 | `GET` | `/api/processes` | Queries systemd for gnss-stack/gnss-dashboard unit states |
+| `GET` | `/api/logs` | Lists downloadable raw log and RINEX files |
+| `GET` | `/api/logs/download/<file>` | Downloads a log file |
+| `POST` | `/api/logs/convert/<file>` | Converts a raw file to RINEX via convbin (async); returns `job` key |
+| `GET` | `/api/logs/convert/status/<job>` | Polls status of a conversion job |
 
 **WebSocket** (Socket.IO):
 - Event `gnss_update` — emitted every 1 second by a background thread to all connected clients
